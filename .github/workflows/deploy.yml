@@ -39,6 +39,7 @@ jobs:
 
     - name: Docker Compose up
       run: |
+        docker-compose down -v
         docker-compose up -d --build
         sleep 15
         docker-compose ps
