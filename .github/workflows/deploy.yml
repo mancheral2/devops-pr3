@@ -1,0 +1,71 @@
+name: Deploy and Test
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy-and-test:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Create .env from secrets
+      run: |
+        cat > .env << EOF
+        DB_HOST=${{ secrets.DB_HOST }}
+        DB_PORT=${{ secrets.DB_PORT }}
+        DB_NAME=${{ secrets.DB_NAME }}
+        DB_USER=${{ secrets.DB_USER }}
+        DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+        APP_PORT=${{ secrets.APP_PORT }}
+        APP_SECRET=${{ secrets.APP_SECRET }}
+        API_KEY=${{ secrets.API_KEY }}
+        EOF
+        sed 's/=.*/=***/' .env > env-masked.txt
+        cat env-masked.txt
+
+    - name: Docker Compose up
+      run: |
+        docker-compose up -d --build
+        sleep 15
+        docker-compose ps
+
+    - name: Check containers are running
+      run: |
+        docker-compose ps | grep -q "Up" || { docker-compose logs; exit 1; }
+
+    - name: Test app and DB
+      run: |
+        curl -f http://localhost:${{ secrets.APP_PORT }}/health
+        curl -f http://localhost:${{ secrets.APP_PORT }}/api/data
+
+    - name: Test DB matches web
+      run: |
+        DB_COUNT=$(docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | tr -d ' \r\n')
+        WEB_COUNT=$(curl -s http://localhost:${{ secrets.APP_PORT }}/api/items/count)
+        echo "DB: $DB_COUNT, WEB: $WEB_COUNT"
+        echo "DB records: $DB_COUNT" > test-report.md
+        echo "Web records: $WEB_COUNT" >> test-report.md
+        [ "$DB_COUNT" = "$WEB_COUNT" ]
+
+    - name: Save logs
+      if: always()
+      run: |
+        docker-compose logs > deployment-logs.txt
+        docker ps -a > docker-ps.txt
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: deployment-artifacts
+        path: |
+          env-masked.txt
+          test-report.md
+          deployment-logs.txt
+          docker-ps.txt
+        retention-days: 30
