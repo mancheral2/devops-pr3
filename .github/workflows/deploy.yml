@@ -13,18 +13,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: DEBUG
-      continue-on-error: true
-      run: |
-        {
-          echo "pwd=$(pwd)"; id; echo "shell=$BASH_VERSION"
-          env | sort | grep -v -i -E 'secret|password|key|token'
-          ls -la
-          touch .env && echo touch-ok
-          bash -x -c 'printf "A=%s\n" "$DB_HOST" > .env2 && echo printf-ok' 
-          which docker docker-compose sed
-        } > "$HOME/ci-debug.txt" 2>&1
-
     - name: Create .env from secrets
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
@@ -36,7 +24,6 @@ jobs:
         APP_SECRET: ${{ secrets.APP_SECRET }}
         API_KEY: ${{ secrets.API_KEY }}
       run: |
-        exec 2>>"$HOME/ci-debug.txt"; set -x
         {
           printf 'DB_HOST=%s\n' "$DB_HOST"
           printf 'DB_PORT=%s\n' "$DB_PORT"
