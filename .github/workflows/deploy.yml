@@ -1,19 +1,26 @@
+# Название workflow, оно показывается во вкладке Actions
 name: Deploy and Test
 
+# Когда запускать workflow
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches: [ main ]   # при каждом push в ветку main
+  workflow_dispatch:     # и вручную кнопкой Run workflow
 
 jobs:
+  # Единственная job (задача) с именем deploy-and-test
   deploy-and-test:
+    # Выполнять на своём раннере (self-hosted), а не в облаке GitHub
     runs-on: self-hosted
 
     steps:
+    # Шаг 1. Скачать код репозитория в рабочую папку раннера
     - name: Checkout code
       uses: actions/checkout@v4
 
+    # Шаг 2. Создать файл .env из секретов GitHub
     - name: Create .env from secrets
+      # Секреты передаются шагу как переменные окружения
       env:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_PORT: ${{ secrets.DB_PORT }}
@@ -24,6 +31,7 @@ jobs:
         APP_SECRET: ${{ secrets.APP_SECRET }}
         API_KEY: ${{ secrets.API_KEY }}
       run: |
+        # Все printf пишутся одним потоком в файл .env (см. "} > .env")
         {
           printf 'DB_HOST=%s\n' "$DB_HOST"
           printf 'DB_PORT=%s\n' "$DB_PORT"
@@ -34,48 +42,72 @@ jobs:
           printf 'APP_SECRET=%s\n' "$APP_SECRET"
           printf 'API_KEY=%s\n' "$API_KEY"
         } > .env
+        # Копия .env, где все значения заменены на *** (безопасна для артефактов)
         LC_ALL=C sed 's/=.*/=***/' .env > env-masked.txt
+        # Показать замаскированный файл в логе
         cat env-masked.txt
 
+    # Шаг 3. Запустить проект через Docker Compose
     - name: Docker Compose up
       run: |
+        # Удалить старые контейнеры и тома (чтобы база создалась заново)
         docker-compose down -v
+        # Собрать образ и запустить контейнеры в фоне
         docker-compose up -d --build
+        # Подождать, пока PostgreSQL запустится
         sleep 15
+        # Показать список контейнеров и их статус
         docker-compose ps
 
+    # Шаг 4. Проверить, что контейнеры запущены
     - name: Check containers are running
       run: |
+        # Если в списке нет слова Up, вывести логи и завершить шаг с ошибкой
         docker-compose ps | grep -q "Up" || { docker-compose logs; exit 1; }
 
+    # Шаг 5. Проверить приложение и подключение к БД
     - name: Test app and DB
       run: |
+        # Приложение отвечает? (-f: ошибка при HTTP 4xx/5xx)
         curl -f http://localhost:${{ secrets.APP_PORT }}/health
+        # Приложение читает данные из БД?
         curl -f http://localhost:${{ secrets.APP_PORT }}/api/data
 
+    # Шаг 6. Сравнить данные в БД и в веб-интерфейсе
     - name: Test DB matches web
       run: |
+        # Число записей прямо в базе (запрос внутри контейнера db)
         DB_COUNT=$(docker-compose exec -T db psql -U ${{ secrets.DB_USER }} -d ${{ secrets.DB_NAME }} -t -c "SELECT COUNT(*) FROM items;" | tr -d ' \r\n')
+        # Число записей, которое отдаёт веб-приложение
         WEB_COUNT=$(curl -s http://localhost:${{ secrets.APP_PORT }}/api/items/count)
         echo "DB: $DB_COUNT, WEB: $WEB_COUNT"
+        # Записать результат в отчёт (это будущий артефакт)
         echo "DB records: $DB_COUNT" > test-report.md
         echo "Web records: $WEB_COUNT" >> test-report.md
+        # Если числа не равны, шаг падает
         [ "$DB_COUNT" = "$WEB_COUNT" ]
 
+    # Шаг 7. Сохранить логи (always() = выполнять даже после ошибки)
     - name: Save logs
       if: always()
       run: |
+        # Логи всех контейнеров
         docker-compose logs > deployment-logs.txt
+        # Состояние Docker
         docker ps -a > docker-ps.txt
 
+    # Шаг 8. Загрузить файлы на GitHub как артефакт (тоже всегда)
     - name: Upload artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
+        # Имя артефакта на странице запуска
         name: deployment-artifacts
+        # Какие файлы загрузить (комментарии внутри списка нельзя)
         path: |
           env-masked.txt
           test-report.md
           deployment-logs.txt
           docker-ps.txt
+        # Хранить артефакт 30 дней
         retention-days: 30
