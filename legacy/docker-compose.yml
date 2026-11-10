@@ -2,6 +2,7 @@ name: mattermost-pr4
 services:
   mattermost:
     image: mattermost/mattermost-team-edition:9.5
+    platform: linux/amd64
     ports:
       - "8065:8065"
     environment:

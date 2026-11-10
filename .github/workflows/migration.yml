@@ -47,7 +47,7 @@ jobs:
       - name: Migrate data
         if: steps.status.outputs.done == 'false'
         run: |
-          docker run --rm --network mattermost_network \
+          docker run --rm --platform linux/amd64 --network mattermost_network \
             mattermost/mattermost-pgloader:latest pgloader \
             --with "include drop" \
             "mysql://root:${DB_MYSQL_ROOT_PASSWORD}@mattermost-mysql/mattermost" \
