@@ -52,6 +52,9 @@ jobs:
             --with "include drop" \
             "mysql://root:${DB_MYSQL_ROOT_PASSWORD}@mattermost-mysql/mattermost" \
             "postgresql://postgres:${DB_POSTGRES_PASSWORD}@db-postgres/mattermost"
+          docker compose exec -T db-postgres psql -U postgres -d mattermost \
+            -v ON_ERROR_STOP=1 \
+            -c 'DROP SCHEMA IF EXISTS public CASCADE; ALTER SCHEMA mattermost RENAME TO public;'
 
       - name: Mark successful migration
         if: steps.status.outputs.done == 'false'
