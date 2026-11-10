@@ -1,0 +1,38 @@
+name: mattermost-pr4
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:9.5
+    ports:
+      - "8065:8065"
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: mysql
+      MM_SQLSETTINGS_DATASOURCE: root:${DB_MYSQL_ROOT_PASSWORD:?}@tcp(mattermost-mysql:3306)/mattermost?charset=utf8mb4&readTimeout=30s&writeTimeout=30s
+      MM_SERVICESETTINGS_SITEURL: http://localhost:8065
+    volumes:
+      - mattermost_data:/mattermost/data
+    depends_on:
+      mattermost-mysql:
+        condition: service_healthy
+    networks: [mattermost_network]
+
+  mattermost-mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_MYSQL_ROOT_PASSWORD:?}
+      MYSQL_DATABASE: mattermost
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_general_ci"]
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'MYSQL_PWD="$$MYSQL_ROOT_PASSWORD" mysqladmin ping -h localhost -u root --silent']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [mattermost_network]
+
+networks:
+  mattermost_network:
+    name: mattermost_network
+volumes:
+  mattermost_data:
+  mysql_data:

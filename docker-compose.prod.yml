@@ -1,0 +1,37 @@
+name: mattermost-pr4
+services:
+  mattermost:
+    image: mattermost/mattermost-team-edition:12.0.1
+    ports:
+      - "8065:8065"
+    environment:
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://postgres:${DB_POSTGRES_PASSWORD:?}@db-postgres:5432/mattermost?sslmode=disable
+      MM_SERVICESETTINGS_SITEURL: http://localhost:8065
+    volumes:
+      - mattermost_data:/mattermost/data
+    depends_on:
+      db-postgres:
+        condition: service_healthy
+    networks: [mattermost_network]
+
+  db-postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: mattermost
+      POSTGRES_PASSWORD: ${DB_POSTGRES_PASSWORD:?}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mattermost"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [mattermost_network]
+
+networks:
+  mattermost_network:
+    name: mattermost_network
+volumes:
+  mattermost_data:
+  postgres_data:
