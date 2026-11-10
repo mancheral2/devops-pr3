@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
+  #защита от параллельного запуска
   group: mattermost-migration
   cancel-in-progress: false
 
@@ -20,8 +21,10 @@ jobs:
       DB_MYSQL_ROOT_PASSWORD: ${{ secrets.DB_MYSQL_ROOT_PASSWORD }}
       DB_POSTGRES_PASSWORD: ${{ secrets.DB_POSTGRES_PASSWORD }}
     steps:
+      # Получить файлы репозитория на раннер для развертывания.
       - uses: actions/checkout@v4
 
+      # Проверить флаг: завершенную миграцию повторять не нужно (идемпотентность).
       - name: Check migration flag
         id: status
         run: |
@@ -32,6 +35,7 @@ jobs:
             echo "done=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Остановить запись новых данных и сохранить бэкап MySQL для восстановления.
       - name: Stop legacy app and back up MySQL
         if: steps.status.outputs.done == 'false'
         run: |
@@ -40,10 +44,13 @@ jobs:
             sh -c 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -u root --single-transaction --no-tablespaces mattermost' \
             > "$HOME/.mattermost-pr4/backup-${{ github.run_id }}-${{ github.run_attempt }}.sql"
 
+      # Подготовить целевую базу PostgreSQL и дождаться ее готовности.
       - name: Start PostgreSQL
         if: steps.status.outputs.done == 'false'
         run: docker compose up -d --wait db-postgres
 
+      # pgloader: перенести MySQL в PostgreSQL; include drop позволяет повторить перенос.
+      # Согласовать схему и типы данных с требованиями Mattermost.
       - name: Migrate data
         if: steps.status.outputs.done == 'false'
         run: |
@@ -61,15 +68,18 @@ jobs:
             -c "UPDATE db_migrations SET name='add_createat_to_teamembers'
                 WHERE version=92 AND name='add_createat_to_teammembers';"
 
+      # Запустить новый стек; remove-orphans удалит старый контейнер MySQL.
       - name: Deploy Mattermost 12.0.1
         run: docker compose up -d --remove-orphans
 
+      # Smoke-тест: проверить, что API обновленного Mattermost отвечает без ошибки.
       - name: Check Mattermost API
         run: |
           curl --fail --silent --show-error --retry 60 --retry-delay 5 \
             --retry-all-errors --max-time 5 \
             http://localhost:8065/api/v4/system/ping
 
+      # Сохранить флаг успеха, чтобы следующие запуски пропускали бэкап и перенос.
       - name: Mark successful migration
         if: steps.status.outputs.done == 'false'
         run: touch "$HOME/.mattermost-pr4/.migration_completed"
