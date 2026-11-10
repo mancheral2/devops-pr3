@@ -48,13 +48,16 @@ jobs:
         if: steps.status.outputs.done == 'false'
         run: |
           docker run --rm --platform linux/amd64 --network mattermost_network \
-            mattermost/mattermost-pgloader:latest pgloader \
+            mattermost/mattermost-pgloader:latest pgloader --on-error-stop \
             --with "include drop" \
             "mysql://root:${DB_MYSQL_ROOT_PASSWORD}@mattermost-mysql/mattermost" \
             "postgresql://postgres:${DB_POSTGRES_PASSWORD}@db-postgres/mattermost"
           docker compose exec -T db-postgres psql -U postgres -d mattermost \
             -v ON_ERROR_STOP=1 \
             -c 'DROP SCHEMA IF EXISTS public CASCADE; ALTER SCHEMA mattermost RENAME TO public;' \
+            -c 'ALTER TYPE channels_type RENAME TO channel_type;
+                ALTER TYPE teams_type RENAME TO team_type;
+                ALTER TYPE uploadsessions_type RENAME TO upload_session_type;' \
             -c "UPDATE db_migrations SET name='add_createat_to_teamembers'
                 WHERE version=92 AND name='add_createat_to_teammembers';"
 
