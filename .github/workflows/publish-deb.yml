@@ -1,0 +1,99 @@
+name: Publish syspulse to Nexus
+
+on:
+  push:
+    branches: [release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: syspulse-publish
+
+jobs:
+  publish:
+    runs-on: self-hosted
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: false
+
+      - name: Build Linux binary
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/syspulse .
+
+      - name: Package as .deb
+        id: package
+        run: |
+          version=$(sed -n 's/^const Version = "\([^"]*\)"$/\1/p' main.go)
+          test -n "$version"
+          root="build/syspulse_${version}"
+          deb="dist/syspulse_${version}_amd64.deb"
+          mkdir -p "$root/DEBIAN" "$root/usr/bin"
+          install -m 755 dist/syspulse "$root/usr/bin/syspulse"
+          cat > "$root/DEBIAN/control" <<EOF_CONTROL
+          Package: syspulse
+          Version: ${version}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: DevOps Team <devops@example.com>
+          Description: Lightweight CLI tool for a system health snapshot
+           Reads /proc and reports uptime, load average and memory info.
+          Depends: libc6 (>= 2.17)
+          EOF_CONTROL
+          docker run --rm --platform linux/amd64 -v "$PWD:/work" -w /work ubuntu:22.04 \
+            sh -ec 'dpkg-deb --build --root-owner-group "$1" "$2"; dpkg-deb --info "$2"' sh "$root" "$deb"
+          printf 'version=%s\ndeb=%s\n' "$version" "$deb" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Nexus
+        env:
+          NEXUS_HOST: ${{ secrets.NEXUS_HOST }}
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
+          DEB: ${{ steps.package.outputs.deb }}
+        run: |
+          curl --fail --silent --show-error --output /dev/null \
+            --user "$NEXUS_USER:$NEXUS_PASSWORD" \
+            --header 'Content-Type: multipart/form-data' --data-binary "@$DEB" \
+            "http://$NEXUS_HOST:8081/repository/syspulse/"
+
+      - name: Verify installation in Ubuntu
+        env:
+          NEXUS_HOST: ${{ secrets.NEXUS_HOST }}
+          NEXUS_APT_KEY: ${{ vars.NEXUS_APT_KEY }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          if [[ "$NEXUS_HOST" == 127.0.0.1 ]]; then
+            NEXUS_HOST=host.docker.internal
+          fi
+          test -n "$NEXUS_APT_KEY"
+          docker run --rm --platform linux/amd64 -e NEXUS_HOST -e NEXUS_APT_KEY -e VERSION \
+            ubuntu:22.04 bash -euc '
+              install -d -m 755 /etc/apt/keyrings
+              printf "%s\n" "$NEXUS_APT_KEY" > /etc/apt/keyrings/syspulse.asc
+              chmod 644 /etc/apt/keyrings/syspulse.asc
+              printf "deb [signed-by=/etc/apt/keyrings/syspulse.asc] http://%s:8081/repository/syspulse/ stable main\n" "$NEXUS_HOST" \
+                > /etc/apt/sources.list.d/syspulse.list
+              apt-get update -o APT::Update::Error-Mode=any
+              apt-get install -y "syspulse=$VERSION"
+              dpkg-query -W syspulse
+              actual=$(syspulse --version)
+              printf "%s\n" "$actual"
+              test "$actual" = "syspulse $VERSION"
+              syspulse
+            '
+
+      - name: Save .deb artifact
+        if: always() && steps.package.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: syspulse-deb
+          path: ${{ steps.package.outputs.deb }}
+          retention-days: 7
