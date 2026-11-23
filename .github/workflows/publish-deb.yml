@@ -81,8 +81,14 @@ jobs:
               chmod 644 /etc/apt/keyrings/syspulse.asc
               printf "deb [signed-by=/etc/apt/keyrings/syspulse.asc] http://%s:8081/repository/syspulse/ stable main\n" "$NEXUS_HOST" \
                 > /etc/apt/sources.list.d/syspulse.list
-              apt-get update -o APT::Update::Error-Mode=any
-              apt-get install -y "syspulse=$VERSION"
+              # Nexus updates the signed APT index after the upload returns.
+              for attempt in 1 2 3 4 5; do
+                if apt-get update -o APT::Update::Error-Mode=any && apt-get install -y "syspulse=$VERSION"; then
+                  break
+                fi
+                test "$attempt" -lt 5
+                sleep 3
+              done
               dpkg-query -W syspulse
               actual=$(syspulse --version)
               printf "%s\n" "$actual"
